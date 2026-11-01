@@ -8,21 +8,31 @@ export async function callLLM(s, system, user, image) {
   return openai(s, system, user, image);
 }
 
-// Free tiers allow only a few requests per minute: wait and retry on 429/503.
-async function post(url, headers, body) {
+export const DAILY_QUOTA = "DAILY_QUOTA";
+
+// Free tiers allow only a few requests per minute: wait and retry on 429/503,
+// telling the page why it is waiting. A per-day limit is not worth waiting for.
+async function post(url, headers, body, notify) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(90000)
     });
     const text = await res.text();
     if (res.ok) return JSON.parse(text);
+    if (res.status === 429 && /per ?day|PerDay|daily/i.test(text)) {
+      const e = new Error(`429: ${text.slice(0, 300)}`);
+      e.code = DAILY_QUOTA;
+      throw e;
+    }
     if ((res.status === 429 || res.status === 503 || res.status === 529) && attempt < 4) {
       const ra = Number(res.headers.get("retry-after"));
       const hinted = Number((text.match(/retry in ([\d.]+)s/i) || [])[1]);
-      const wait = (ra || hinted || 2 ** attempt * 3) * 1000;
-      await new Promise((r) => setTimeout(r, Math.min(wait, 60000)));
+      const wait = Math.min((ra || hinted || 2 ** attempt * 4) * 1000, 60000);
+      notify?.(`ชนโควต้าต่อนาทีของ AI รอ ${Math.round(wait / 1000)} วินาทีแล้วลองใหม่…`);
+      await new Promise((r) => setTimeout(r, wait));
       continue;
     }
     throw new Error(`${res.status}: ${text.slice(0, 300)}`);
@@ -40,7 +50,8 @@ async function anthropic(s, system, user, image) {
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true"
     },
-    { model: s.model, max_tokens: 8000, system, messages: [{ role: "user", content }] }
+    { model: s.model, max_tokens: 8000, system, messages: [{ role: "user", content }] },
+    s._notify
   );
   return j.content.filter((c) => c.type === "text").map((c) => c.text).join("");
 }
@@ -57,25 +68,34 @@ async function openai(s, system, user, image) {
       { role: "system", content: system },
       { role: "user", content }
     ]
-  });
+  }, s._notify);
   return j.choices[0].message.content;
 }
 
-// Google retires model names often. If the saved one is gone, pick the newest
-// "flash" model this key can use, remember it, and retry once.
-async function newestGeminiFlash(apiKey) {
+// Google retires model names often, and free "flash" models allow only ~20
+// requests a day. Pick the newest model of a family this key can use.
+async function newestGemini(apiKey, family) {
   const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", {
     headers: { "x-goog-api-key": apiKey }
   });
   if (!res.ok) return null;
   const { models = [] } = await res.json();
-  const ver = (n) => (n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0";
+  const ver = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+  const re = new RegExp(`^gemini-[\\d.]+-${family}$`);
   const ids = models
     .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
     .map((m) => m.name.replace(/^models\//, ""))
-    .filter((n) => /^gemini-[\d.]+-flash$/.test(n));
-  ids.sort((a, b) => parseFloat(ver(b)) - parseFloat(ver(a)));
+    .filter((n) => re.test(n));
+  ids.sort((a, b) => ver(b) - ver(a));
   return ids[0] || null;
+}
+
+async function switchModel(s, family) {
+  const next = (await newestGemini(s.apiKey, family)) || (family === "flash-lite" ? "gemini-3.5-flash-lite" : null);
+  if (!next || next === s.model) return null;
+  await chrome.storage.sync.set({ model: next });
+  s._notify?.(`เปลี่ยนไปใช้โมเดล ${next}`);
+  return next;
 }
 
 async function gemini(s, system, user, image) {
@@ -85,10 +105,14 @@ async function gemini(s, system, user, image) {
     if (/^400/.test(e.message) && /thinking/i.test(e.message) && !s.noThinkingConfig) {
       return gemini({ ...s, noThinkingConfig: true }, system, user, image);
     }
+    if (e.code === DAILY_QUOTA) {
+      const next = !/lite/.test(s.model) && (await switchModel(s, "flash-lite"));
+      if (next) return gemini({ ...s, model: next }, system, user, image);
+      throw new Error("โควต้าฟรีของ Gemini วันนี้หมดแล้ว ลองพรุ่งนี้ หรือเปิดบิลใน Google AI Studio / ใช้ AI เจ้าอื่น");
+    }
     if (!/^404/.test(e.message)) throw e;
-    const next = await newestGeminiFlash(s.apiKey);
-    if (!next || next === s.model) throw e;
-    await chrome.storage.sync.set({ model: next });
+    const next = await switchModel(s, /lite/.test(s.model) ? "flash-lite" : "flash");
+    if (!next) throw e;
     return geminiOnce({ ...s, model: next }, system, user, image);
   }
 }
@@ -108,7 +132,8 @@ async function geminiOnce(s, system, user, image) {
         // Translation needs little reasoning; low thinking is much faster.
         ...(s.noThinkingConfig ? {} : { thinkingConfig: { thinkingLevel: "low" } })
       }
-    }
+    },
+    s._notify
   );
   return j.candidates[0].content.parts.map((p) => p.text || "").join("");
 }
