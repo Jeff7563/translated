@@ -81,40 +81,52 @@ async function blobToBase64(blob) {
   return btoa(bin);
 }
 
-async function translateImage({ src, title, context }) {
+// Slices of recently used images, kept in memory so each slice request does
+// not download and cut the image again.
+const sliceCache = new Map();
+function getSlices(src) {
+  if (!sliceCache.has(src)) {
+    const p = loadSlices(src);
+    p.catch(() => sliceCache.delete(src));
+    sliceCache.set(src, p);
+    while (sliceCache.size > 12) sliceCache.delete(sliceCache.keys().next().value);
+  }
+  return sliceCache.get(src);
+}
+
+async function imageSlices({ src }) {
+  const slices = await getSlices(src);
+  return slices.map(({ y0, y1 }) => ({ y0, y1 }));
+}
+
+async function translateSlice({ src, index, title, context }) {
   const s = await getSettings();
-  const key = "i:" + (await hash(settingsKey(s) + "\u0000" + src));
+  const key = "s:" + (await hash(settingsKey(s) + "\u0000" + src + "\u0000" + index));
   const hit = await cacheGet(key);
   if (hit) return hit;
-  const slices = await loadSlices(src);
-  // All slices of a page at once: much faster than one after another.
-  const replies = await Promise.all(
-    slices.map((sl) =>
-      callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500) }), sl.image).then(parseJSON)
-    )
-  );
+  const sl = (await getSlices(src))[index];
+  if (!sl) return { items: [], story: "" };
+  const reply = await callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500) }), sl.image);
+  const j = parseJSON(reply);
+  const span = sl.y1 - sl.y0;
   const items = [];
-  let story = context || "";
-  replies.forEach((j, k) => {
-    const sl = slices[k];
-    const span = sl.y1 - sl.y0;
-    for (const it of j.items || []) {
-      const b = it.box_2d || it.box;
-      if (!Array.isArray(b) || b.length !== 4 || !it.text) continue;
-      const [ymin, xmin, ymax, xmax] = b.map((v) => Math.min(1000, Math.max(0, Number(v))));
-      if (!(ymax > ymin && xmax > xmin)) continue;
-      items.push({
-        x0: xmin / 1000,
-        x1: xmax / 1000,
-        y0: sl.y0 + (ymin / 1000) * span,
-        y1: sl.y0 + (ymax / 1000) * span,
-        source: it.source || "",
-        text: it.text
-      });
-      if (it.source) story += "\n" + it.source;
-    }
-  });
-  const result = { items, story: story.slice(-1500) };
+  const sources = [];
+  for (const it of j.items || []) {
+    const b = it.box_2d || it.box;
+    if (!Array.isArray(b) || b.length !== 4 || !it.text) continue;
+    const [ymin, xmin, ymax, xmax] = b.map((v) => Math.min(1000, Math.max(0, Number(v))));
+    if (!(ymax > ymin && xmax > xmin)) continue;
+    items.push({
+      x0: xmin / 1000,
+      x1: xmax / 1000,
+      y0: sl.y0 + (ymin / 1000) * span,
+      y1: sl.y0 + (ymax / 1000) * span,
+      source: it.source || "",
+      text: it.text
+    });
+    if (it.source) sources.push(it.source);
+  }
+  const result = { items, story: sources.join("\n") };
   await cacheSet(key, result);
   return result;
 }
@@ -123,7 +135,8 @@ async function translateImage({ src, title, context }) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const run = async () => {
     if (msg.type === "translateTexts") return { ok: true, data: await translateTexts(msg) };
-    if (msg.type === "translateImage") return { ok: true, data: await translateImage(msg) };
+    if (msg.type === "imageSlices") return { ok: true, data: await imageSlices(msg) };
+    if (msg.type === "translateSlice") return { ok: true, data: await translateSlice(msg) };
     if (msg.type === "getSettings") return { ok: true, data: await getSettings() };
     if (msg.type === "clearCache") {
       await chrome.storage.local.clear();
