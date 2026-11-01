@@ -185,5 +185,17 @@ export function parseJSON(text) {
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start < 0 || end < 0) throw new Error("โมเดลไม่ได้ตอบเป็น JSON");
-  return JSON.parse(cleaned.slice(start, end + 1));
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch (e) {
+    // Local models sometimes stop mid-answer or loop. Keep every complete item.
+    const items = [];
+    for (const m of cleaned.matchAll(/\{[^{}]*"(?:bbox_2d|box_2d)"[^{}]*\}/g)) {
+      try {
+        items.push(JSON.parse(m[0]));
+      } catch {}
+    }
+    if (items.length) return { items };
+    throw e;
+  }
 }

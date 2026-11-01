@@ -51,12 +51,19 @@ Reply with ONLY a JSON object mapping each id to its translation, e.g. {"0":"...
 ${JSON.stringify(Object.fromEntries(segments.map((t, i) => [String(i), t])))}`;
 }
 
-export function imageUserPrompt({ title, context }) {
+export function imageUserPrompt({ title, context, pixels, w, h, targetLang }) {
+  const box = pixels
+    ? `"bbox_2d": [x1, y1, x2, y2] in pixels of this image (it is ${w} wide and ${h} tall)`
+    : `"box_2d": [ymin, xmin, ymax, xmax], integers normalized to 0-1000 of this image's height (y) and width (x)`;
+  const key = pixels ? "bbox_2d" : "box_2d";
+  const example = pixels ? "[x1,y1,x2,y2]" : "[ymin,xmin,ymax,xmax]";
   return `This is a part of a comic/manga/webtoon page from "${title || "a web page"}".
 ${context ? `Story so far (previous panels, for context):\n"""${context}"""\n` : ""}
 Find every piece of readable text (speech bubbles, captions, narration boxes, signs, and meaningful sound effects).
-Give one item per separate bubble or box (never merge two bubbles into one item). For each one give a tight bounding box around the bubble/box that contains the text, and its natural translation following all the rules.
-Box format "box_2d": [ymin, xmin, ymax, xmax], integers normalized to 0-1000 of this image's height (y) and width (x).
-Reply with ONLY JSON: {"items":[{"box_2d":[ymin,xmin,ymax,xmax],"source":"original text","text":"translation"}]}
+Give one item per separate bubble or box (never merge two bubbles into one item, never list the same bubble twice).
+The box must cover the whole speech bubble or caption box (its outline), not just the letters.
+Box format ${box}.
+Write "text" only in ${targetLang || "the target language"}. Never use Chinese or Japanese characters unless the original has them.
+Reply with ONLY JSON: {"items":[{"${key}":${example},"source":"original text","text":"translation"}]}
 If there is no text, reply {"items":[]}.`;
 }
