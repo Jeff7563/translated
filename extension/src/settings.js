@@ -19,7 +19,7 @@ export const DEFAULTS = {
 export const MODEL_HINTS = {
   anthropic: "claude-sonnet-5-5",
   openai: "gpt-5-mini",
-  gemini: "gemini-2.5-flash"
+  gemini: "gemini-3.8-flash"
 };
 
 export const LANGS = [

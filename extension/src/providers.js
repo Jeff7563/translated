@@ -51,7 +51,36 @@ async function openai(s, system, user, image) {
   return j.choices[0].message.content;
 }
 
+// Google retires model names often. If the saved one is gone, pick the newest
+// "flash" model this key can use, remember it, and retry once.
+async function newestGeminiFlash(apiKey) {
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", {
+    headers: { "x-goog-api-key": apiKey }
+  });
+  if (!res.ok) return null;
+  const { models = [] } = await res.json();
+  const ver = (n) => (n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0";
+  const ids = models
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => m.name.replace(/^models\//, ""))
+    .filter((n) => /^gemini-[\d.]+-flash$/.test(n));
+  ids.sort((a, b) => parseFloat(ver(b)) - parseFloat(ver(a)));
+  return ids[0] || null;
+}
+
 async function gemini(s, system, user, image) {
+  try {
+    return await geminiOnce(s, system, user, image);
+  } catch (e) {
+    if (!/^404/.test(e.message)) throw e;
+    const next = await newestGeminiFlash(s.apiKey);
+    if (!next || next === s.model) throw e;
+    await chrome.storage.sync.set({ model: next });
+    return geminiOnce({ ...s, model: next }, system, user, image);
+  }
+}
+
+async function geminiOnce(s, system, user, image) {
   const parts = [];
   if (image) parts.push({ inline_data: { mime_type: image.mime, data: image.base64 } });
   parts.push({ text: user });
