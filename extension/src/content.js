@@ -15,8 +15,12 @@
   const imageState = new Map(); // img -> { overlay, data }
   let lastContext = "";
   let observer = null;
-  let imgObserver = null;
-  let imgQueue = Promise.resolve();
+  const hooked = new WeakSet();
+  const watched = new Set(); // images waiting to come near the viewport
+  let scanTimer = null;
+  const IMG_CONCURRENCY = 3;
+  let imgRunning = 0;
+  const imgWaiting = [];
   let storySoFar = "";
 
   const RELOADED = "ส่วนขยายถูกอัปเดต กรุณารีเฟรชหน้า (F5) แล้วแปลใหม่";
@@ -152,20 +156,66 @@
     const imgs = root.tagName === "IMG" ? [root] : root.querySelectorAll?.("img") || [];
     imgs.forEach((img) => {
       if (imageState.has(img)) return;
+      if (!hooked.has(img)) {
+        hooked.add(img);
+        // Lazy readers swap a placeholder for the real page later: check again on every load.
+        img.addEventListener("load", () => maybeObserve(img));
+      }
       if (img.complete) maybeObserve(img);
-      else img.addEventListener("load", () => maybeObserve(img), { once: true });
     });
   }
   function maybeObserve(img) {
-    if (active && !imageState.has(img) && bigEnough(img)) imgObserver.observe(img);
+    if (active && !imageState.has(img) && bigEnough(img)) {
+      watched.add(img);
+      scheduleScan();
+    }
+  }
+
+  // Translate images a few screens ahead of the reader. Uses raw positions
+  // instead of IntersectionObserver because many readers scroll inside a div,
+  // where IntersectionObserver ignores the look-ahead margin.
+  const AHEAD = 4000;
+  const BEHIND = 800;
+  function scanImages() {
+    scanTimer = null;
+    if (!active) return;
+    const vh = window.innerHeight;
+    for (const img of watched) {
+      if (!img.isConnected) {
+        watched.delete(img);
+        continue;
+      }
+      const r = img.getBoundingClientRect();
+      if (r.height && r.top < vh + AHEAD && r.bottom > -BEHIND) {
+        watched.delete(img);
+        queueImage(img);
+      }
+    }
+  }
+  function scheduleScan() {
+    if (!scanTimer) scanTimer = setTimeout(scanImages, 150);
   }
 
   function queueImage(img) {
     if (imageState.has(img)) return;
     imageState.set(img, { overlay: null, data: null });
-    imgObserver?.unobserve(img);
-    // Sequential so the story context carries from panel to panel.
-    imgQueue = imgQueue.then(() => translateImg(img)).catch(() => {});
+    imgWaiting.push(img);
+    pumpImages();
+  }
+
+  function pumpImages() {
+    while (imgRunning < IMG_CONCURRENCY && imgWaiting.length) {
+      // Nearest image to the viewport first.
+      imgWaiting.sort((a, b) => Math.abs(a.getBoundingClientRect().top) - Math.abs(b.getBoundingClientRect().top));
+      const img = imgWaiting.shift();
+      imgRunning++;
+      translateImg(img)
+        .catch(() => {})
+        .finally(() => {
+          imgRunning--;
+          pumpImages();
+        });
+    }
   }
 
   async function translateImg(img) {
@@ -204,7 +254,7 @@
       b.style.left = it.x0 * 100 + "%";
       b.style.top = it.y0 * 100 + "%";
       b.style.width = Math.max(0.04, it.x1 - it.x0) * 100 + "%";
-      b.style.height = Math.max(0.015, it.y1 - it.y0) * 100 + "%";
+      b.style.minHeight = Math.max(0.015, it.y1 - it.y0) * 100 + "%";
       b.addEventListener("click", (e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -212,29 +262,50 @@
       });
       ov.appendChild(b);
     }
-    document.body.appendChild(ov);
+    img.insertAdjacentElement("afterend", ov);
     st.overlay = ov;
     position(img, st);
   }
 
+  // The overlay is the image's next sibling, so it shares the image's
+  // containing block and moves with it no matter which element scrolls.
   function position(img, st) {
-    if (!st.overlay) return;
-    const r = img.getBoundingClientRect();
     const ov = st.overlay;
-    ov.style.left = r.left + window.scrollX + "px";
-    ov.style.top = r.top + window.scrollY + "px";
-    ov.style.width = r.width + "px";
-    ov.style.height = r.height + "px";
-    ov.style.display = r.width && r.height ? "block" : "none";
-    for (const b of ov.children) fit(b);
+    if (!ov) return;
+    if (ov.previousElementSibling !== img) img.insertAdjacentElement("afterend", ov);
+    const w = img.offsetWidth;
+    const h = img.offsetHeight;
+    const parent = ov.offsetParent;
+    const sameParent = parent && parent === img.offsetParent;
+    if (sameParent) {
+      ov.style.left = img.offsetLeft + img.clientLeft + "px";
+      ov.style.top = img.offsetTop + img.clientTop + "px";
+    } else if (parent) {
+      const a = img.getBoundingClientRect();
+      const b = parent.getBoundingClientRect();
+      ov.style.left = a.left - b.left + parent.scrollLeft - parent.clientLeft + "px";
+      ov.style.top = a.top - b.top + parent.scrollTop - parent.clientTop + "px";
+    }
+    ov.style.width = w + "px";
+    ov.style.height = h + "px";
+    ov.style.display = w && h ? "block" : "none";
+    if (ov.dataset.w !== String(w)) {
+      ov.dataset.w = String(w);
+      for (const b of ov.children) fit(b);
+    }
   }
 
+  // Biggest readable font that fits the bubble; the box may grow a little
+  // rather than shrink text below 11px.
   function fit(el) {
-    const h = el.clientHeight;
-    if (!h) return;
-    let size = Math.min(22, Math.max(9, h / 2.2));
+    const w = el.clientWidth;
+    const h = el.parentElement.clientHeight * (parseFloat(el.style.minHeight) / 100);
+    if (!w || !h) return;
+    const len = Math.max(1, el.textContent.length);
+    let size = Math.sqrt((w * h * 0.55) / len);
+    size = Math.max(11, Math.min(26, size));
     el.style.fontSize = size + "px";
-    while (size > 8 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
+    while (size > 11 && el.scrollWidth > el.clientWidth + 1) {
       size -= 1;
       el.style.fontSize = size + "px";
     }
@@ -242,6 +313,7 @@
 
   function repositionAll() {
     for (const [img, st] of imageState) position(img, st);
+    scheduleScan();
   }
 
   function translateOneImage(src) {
@@ -259,10 +331,7 @@
     settings = await send({ type: "getSettings" });
     active = true;
     status("TranslateT กำลังแปล…");
-    imgObserver = new IntersectionObserver(
-      (entries) => entries.forEach((e) => e.isIntersecting && queueImage(e.target)),
-      { rootMargin: "1200px 0px" }
-    );
+    document.addEventListener("scroll", scheduleScan, { capture: true, passive: true });
     watchImages(document.body);
     observer = new MutationObserver((muts) => {
       const added = [];
@@ -301,7 +370,9 @@
   function stop() {
     active = false;
     observer?.disconnect();
-    imgObserver?.disconnect();
+    watched.clear();
+    imgWaiting.length = 0;
+    document.removeEventListener("scroll", scheduleScan, true);
     clearInterval(posTimer);
     window.removeEventListener("resize", repositionAll);
     restoreText();

@@ -72,6 +72,9 @@ async function gemini(s, system, user, image) {
   try {
     return await geminiOnce(s, system, user, image);
   } catch (e) {
+    if (/^400/.test(e.message) && /thinking/i.test(e.message) && !s.noThinkingConfig) {
+      return gemini({ ...s, noThinkingConfig: true }, system, user, image);
+    }
     if (!/^404/.test(e.message)) throw e;
     const next = await newestGeminiFlash(s.apiKey);
     if (!next || next === s.model) throw e;
@@ -90,7 +93,11 @@ async function geminiOnce(s, system, user, image) {
     {
       system_instruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts }],
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: {
+        responseMimeType: "application/json",
+        // Translation needs little reasoning; low thinking is much faster.
+        ...(s.noThinkingConfig ? {} : { thinkingConfig: { thinkingLevel: "low" } })
+      }
     }
   );
   return j.candidates[0].content.parts.map((p) => p.text || "").join("");
