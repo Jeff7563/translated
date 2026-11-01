@@ -8,15 +8,25 @@ export async function callLLM(s, system, user, image) {
   return openai(s, system, user, image);
 }
 
+// Free tiers allow only a few requests per minute: wait and retry on 429/503.
 async function post(url, headers, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(body)
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${res.status}: ${text.slice(0, 300)}`);
-  return JSON.parse(text);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    if (res.ok) return JSON.parse(text);
+    if ((res.status === 429 || res.status === 503 || res.status === 529) && attempt < 4) {
+      const ra = Number(res.headers.get("retry-after"));
+      const hinted = Number((text.match(/retry in ([\d.]+)s/i) || [])[1]);
+      const wait = (ra || hinted || 2 ** attempt * 3) * 1000;
+      await new Promise((r) => setTimeout(r, Math.min(wait, 60000)));
+      continue;
+    }
+    throw new Error(`${res.status}: ${text.slice(0, 300)}`);
+  }
 }
 
 async function anthropic(s, system, user, image) {

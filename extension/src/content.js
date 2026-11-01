@@ -18,9 +18,6 @@
   const hooked = new WeakSet();
   const watched = new Set(); // images waiting to come near the viewport
   let scanTimer = null;
-  const IMG_CONCURRENCY = 3;
-  let imgRunning = 0;
-  const imgWaiting = [];
   let storySoFar = "";
 
   const RELOADED = "ส่วนขยายถูกอัปเดต กรุณารีเฟรชหน้า (F5) แล้วแปลใหม่";
@@ -171,11 +168,16 @@
     }
   }
 
-  // Translate images a few screens ahead of the reader. Uses raw positions
-  // instead of IntersectionObserver because many readers scroll inside a div,
-  // where IntersectionObserver ignores the look-ahead margin.
-  const AHEAD = 4000;
-  const BEHIND = 800;
+  // Work happens per slice (a screen-sized piece of an image), nearest to
+  // what the reader is looking at first, and each slice shows as soon as it is
+  // done. Uses raw positions instead of IntersectionObserver because many
+  // readers scroll inside a div, where IntersectionObserver ignores margins.
+  const AHEAD = 1600; // px below the screen we start translating
+  const BEHIND = 600;
+  const JOB_CONCURRENCY = 2;
+  const jobs = [];
+  let jobsRunning = 0;
+
   function scanImages() {
     scanTimer = null;
     if (!active) return;
@@ -191,54 +193,84 @@
         queueImage(img);
       }
     }
+    pumpJobs();
   }
   function scheduleScan() {
-    if (!scanTimer) scanTimer = setTimeout(scanImages, 150);
+    if (!scanTimer) scanTimer = setTimeout(scanImages, 120);
   }
 
-  function queueImage(img) {
+  async function queueImage(img) {
     if (imageState.has(img)) return;
-    imageState.set(img, { overlay: null, data: null });
-    imgWaiting.push(img);
-    pumpImages();
+    const src = img.currentSrc || img.src;
+    if (!src || src.startsWith("data:image/svg")) return;
+    const st = { overlay: null, data: { items: [] }, src };
+    imageState.set(img, st);
+    try {
+      const slices = await send({ type: "imageSlices", src });
+      if (!active || imageState.get(img) !== st) return;
+      slices.forEach((sl, index) => jobs.push({ img, st, index, y0: sl.y0, y1: sl.y1 }));
+      pumpJobs();
+    } catch (e) {
+      status("TranslateT (รูป): " + e.message, true);
+      imageState.delete(img);
+    }
   }
 
-  function pumpImages() {
-    while (imgRunning < IMG_CONCURRENCY && imgWaiting.length) {
-      // Nearest image to the viewport first.
-      imgWaiting.sort((a, b) => Math.abs(a.getBoundingClientRect().top) - Math.abs(b.getBoundingClientRect().top));
-      const img = imgWaiting.shift();
-      imgRunning++;
-      translateImg(img)
-        .catch(() => {})
+  // Distance in px between a slice and the visible screen (0 = on screen).
+  function distance(job) {
+    const r = job.img.getBoundingClientRect();
+    if (!r.height) return Infinity;
+    const top = r.top + job.y0 * r.height;
+    const bottom = r.top + job.y1 * r.height;
+    const vh = window.innerHeight;
+    if (bottom < 0) return -bottom + 400; // already scrolled past: lower priority
+    if (top > vh) return top - vh;
+    return 0;
+  }
+
+  function pumpJobs() {
+    while (active && jobsRunning < JOB_CONCURRENCY && jobs.length) {
+      let best = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < jobs.length; i++) {
+        if (!jobs[i].img.isConnected) {
+          jobs.splice(i--, 1);
+          continue;
+        }
+        const d = distance(jobs[i]);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      if (best < 0 || bestD > AHEAD) return; // wait for the reader to scroll closer
+      const [job] = jobs.splice(best, 1);
+      jobsRunning++;
+      bump(1);
+      runJob(job)
+        .catch((e) => status("TranslateT (รูป): " + e.message, true))
         .finally(() => {
-          imgRunning--;
-          pumpImages();
+          jobsRunning--;
+          bump(-1);
+          pumpJobs();
         });
     }
   }
 
-  async function translateImg(img) {
-    if (!active) return;
-    const src = img.currentSrc || img.src;
-    if (!src || src.startsWith("data:image/svg")) return;
-    bump(1);
-    try {
-      const data = await send({ type: "translateImage", src, title: document.title, context: storySoFar });
-      storySoFar = data.story || storySoFar;
-      if (!active) return;
-      const st = imageState.get(img);
-      if (st) {
-        st.data = data;
-        drawOverlay(img, st);
-      }
-    } catch (e) {
-      status("TranslateT (รูป): " + e.message, true);
-      imageState.delete(img);
-      pending--;
-      return;
+  async function runJob(job) {
+    const data = await send({
+      type: "translateSlice",
+      src: job.st.src,
+      index: job.index,
+      title: document.title,
+      context: storySoFar
+    });
+    if (!active || imageState.get(job.img) !== job.st) return;
+    if (data.story) storySoFar = (storySoFar + "\n" + data.story).slice(-1500);
+    if (data.items.length) {
+      job.st.data.items.push(...data.items);
+      drawOverlay(job.img, job.st);
     }
-    bump(-1);
   }
 
   function drawOverlay(img, st) {
@@ -371,7 +403,7 @@
     active = false;
     observer?.disconnect();
     watched.clear();
-    imgWaiting.length = 0;
+    jobs.length = 0;
     document.removeEventListener("scroll", scheduleScan, true);
     clearInterval(posTimer);
     window.removeEventListener("resize", repositionAll);
