@@ -7,9 +7,9 @@
 .tt-badge-error { background: #b91c1c; }
 .tt-overlay { position: absolute; z-index: 2147483000; pointer-events: none; }
 .tt-bubble {
-  position: absolute; box-sizing: border-box; pointer-events: auto; overflow: hidden;
+  position: absolute; box-sizing: border-box; pointer-events: auto;
   display: flex; align-items: center; justify-content: center; text-align: center;
-  background: rgba(255,255,255,.96); color: #111; border-radius: 10px; padding: 2px 4px;
+  background: #fff; color: #111; border-radius: 40%; padding: 4px 8px;
   font-family: "Noto Sans Thai", "Sarabun", "Leelawadee UI", system-ui, sans-serif;
   font-weight: 600; line-height: 1.2; word-break: break-word; cursor: pointer;
 }

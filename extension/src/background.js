@@ -58,7 +58,7 @@ async function loadSlices(src) {
   const blob = await res.blob();
   const bmp = await createImageBitmap(blob);
   const { width, height } = bmp;
-  const maxW = Math.min(width, 1200);
+  const maxW = Math.min(width, 1000);
   const scale = maxW / width;
   const sliceH = Math.round(width * 1.6); // in source pixels
   const slices = [];
@@ -87,26 +87,33 @@ async function translateImage({ src, title, context }) {
   const hit = await cacheGet(key);
   if (hit) return hit;
   const slices = await loadSlices(src);
+  // All slices of a page at once: much faster than one after another.
+  const replies = await Promise.all(
+    slices.map((sl) =>
+      callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500) }), sl.image).then(parseJSON)
+    )
+  );
   const items = [];
   let story = context || "";
-  for (const sl of slices) {
-    const reply = await callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: story.slice(-1500) }), sl.image);
-    const j = parseJSON(reply);
+  replies.forEach((j, k) => {
+    const sl = slices[k];
+    const span = sl.y1 - sl.y0;
     for (const it of j.items || []) {
-      if (!Array.isArray(it.box) || it.box.length !== 4 || !it.text) continue;
-      const [x0, y0, x1, y1] = it.box.map(Number);
-      const span = sl.y1 - sl.y0;
+      const b = it.box_2d || it.box;
+      if (!Array.isArray(b) || b.length !== 4 || !it.text) continue;
+      const [ymin, xmin, ymax, xmax] = b.map((v) => Math.min(1000, Math.max(0, Number(v))));
+      if (!(ymax > ymin && xmax > xmin)) continue;
       items.push({
-        x0: x0 / 1000,
-        x1: x1 / 1000,
-        y0: sl.y0 + (y0 / 1000) * span,
-        y1: sl.y0 + (y1 / 1000) * span,
+        x0: xmin / 1000,
+        x1: xmax / 1000,
+        y0: sl.y0 + (ymin / 1000) * span,
+        y1: sl.y0 + (ymax / 1000) * span,
         source: it.source || "",
         text: it.text
       });
       if (it.source) story += "\n" + it.source;
     }
-  }
+  });
   const result = { items, story: story.slice(-1500) };
   await cacheSet(key, result);
   return result;
