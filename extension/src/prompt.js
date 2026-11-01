@@ -55,7 +55,7 @@ export function imageUserPrompt({ title, context }) {
   return `This is a part of a comic/manga/webtoon page from "${title || "a web page"}".
 ${context ? `Story so far (previous panels, for context):\n"""${context}"""\n` : ""}
 Find every piece of readable text (speech bubbles, captions, narration boxes, signs, and meaningful sound effects).
-For each one give a tight bounding box around the bubble/box that contains the text, and its natural translation following all the rules.
+Give one item per separate bubble or box (never merge two bubbles into one item). For each one give a tight bounding box around the bubble/box that contains the text, and its natural translation following all the rules.
 Box format "box_2d": [ymin, xmin, ymax, xmax], integers normalized to 0-1000 of this image's height (y) and width (x).
 Reply with ONLY JSON: {"items":[{"box_2d":[ymin,xmin,ymax,xmax],"source":"original text","text":"translation"}]}
 If there is no text, reply {"items":[]}.`;

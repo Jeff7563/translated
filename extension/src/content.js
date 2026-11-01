@@ -156,11 +156,29 @@
       if (!hooked.has(img)) {
         hooked.add(img);
         // Lazy readers swap a placeholder for the real page later: check again on every load.
-        img.addEventListener("load", () => maybeObserve(img));
+        img.addEventListener("load", () => {
+          resetIfSwapped(img);
+          maybeObserve(img);
+        });
       }
       if (img.complete) maybeObserve(img);
     });
   }
+  // Many readers reuse the same <img> for a different page as you scroll
+  // (virtual lists). When its picture changes, drop the old translation
+  // and translate the new picture.
+  function resetIfSwapped(img) {
+    const st = imageState.get(img);
+    if (!st) return false;
+    const src = img.currentSrc || img.src;
+    if (!src || src === st.src) return false;
+    st.overlay?.remove();
+    for (let i = jobs.length - 1; i >= 0; i--) if (jobs[i].st === st) jobs.splice(i, 1);
+    imageState.delete(img);
+    maybeObserve(img);
+    return true;
+  }
+
   function maybeObserve(img) {
     if (active && !imageState.has(img) && bigEnough(img)) {
       watched.add(img);
@@ -344,7 +362,7 @@
   }
 
   function repositionAll() {
-    for (const [img, st] of imageState) position(img, st);
+    for (const [img, st] of [...imageState]) if (!resetIfSwapped(img)) position(img, st);
     scheduleScan();
   }
 
@@ -368,6 +386,10 @@
     observer = new MutationObserver((muts) => {
       const added = [];
       for (const m of muts) {
+        if (m.type === "attributes") {
+          if (m.target.tagName === "IMG") resetIfSwapped(m.target);
+          continue;
+        }
         for (const n of m.addedNodes) {
           if (n.nodeType === Node.TEXT_NODE) added.push(n);
           else if (n.nodeType === Node.ELEMENT_NODE && !n.closest?.(".tt-overlay, .tt-badge, .tt-bi")) {
@@ -379,7 +401,7 @@
       const fresh = added.filter((n) => !seenNodes.has(n) && acceptNode(n));
       if (fresh.length) debounceTranslate(fresh);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
     window.addEventListener("resize", repositionAll);
     posTimer = setInterval(repositionAll, 1500);
     await translateNodes(collect(document.body));
