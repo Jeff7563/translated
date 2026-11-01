@@ -87,8 +87,8 @@ async function ollama(s, system, user, image) {
         model: s.model,
         stream: false,
         format: "json",
-        keep_alive: "30m",
-        options: { temperature: 0.3, num_ctx: 8192 },
+        keep_alive: "10m", // free GPU memory soon after you stop reading
+        options: { temperature: 0.3, num_ctx: 4096 }, // fits a 7B vision model fully in 8 GB VRAM
         messages: [{ role: "system", content: system }, msg]
       },
       s._notify,
