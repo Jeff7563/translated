@@ -19,13 +19,19 @@
   let imgQueue = Promise.resolve();
   let storySoFar = "";
 
+  const RELOADED = "ส่วนขยายถูกอัปเดต กรุณารีเฟรชหน้า (F5) แล้วแปลใหม่";
+  const friendly = (m) => (/context invalidated|Receiving end does not exist/i.test(m) ? RELOADED : m);
   const send = (msg) =>
-    new Promise((resolve, reject) =>
-      chrome.runtime.sendMessage(msg, (r) => {
-        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        r?.ok ? resolve(r.data) : reject(new Error(r?.error || "error"));
-      })
-    );
+    new Promise((resolve, reject) => {
+      try {
+        chrome.runtime.sendMessage(msg, (r) => {
+          if (chrome.runtime.lastError) return reject(new Error(friendly(chrome.runtime.lastError.message)));
+          r?.ok ? resolve(r.data) : reject(new Error(r?.error || "error"));
+        });
+      } catch (e) {
+        reject(new Error(friendly(String(e.message || e))));
+      }
+    });
 
   // ---------- status badge ----------
   let badge;
