@@ -426,6 +426,7 @@
     if (msg.type === "start") start();
     else if (msg.type === "stop") stop();
     else if (msg.type === "toggle") toggle();
+    else if (msg.type === "notice") status("TranslateT: " + msg.text);
     else if (msg.type === "translateOneImage") {
       (settings ? Promise.resolve() : send({ type: "getSettings" }).then((s) => (settings = s))).then(() =>
         translateOneImage(msg.src)

@@ -23,8 +23,9 @@ async function cacheSet(key, value) {
 }
 
 // ---------- text ----------
-async function translateTexts({ title, context, segments }) {
+async function translateTexts({ title, context, segments }, tabId) {
   const s = await getSettings();
+  s._notify = (text) => tabId && chrome.tabs.sendMessage(tabId, { type: "notice", text }).catch(() => {});
   const sk = settingsKey(s);
   const keys = await Promise.all(segments.map((t) => hash(sk + "\u0000" + t).then((h) => "t:" + h)));
   const cached = await chrome.storage.local.get(keys);
@@ -60,7 +61,7 @@ async function loadSlices(src) {
   const { width, height } = bmp;
   const maxW = Math.min(width, 1000);
   const scale = maxW / width;
-  const sliceH = Math.round(width * 1.6); // in source pixels
+  const sliceH = Math.round(width * 2.4); // in source pixels
   const slices = [];
   for (let y = 0; y < height; y += sliceH) {
     const h = Math.min(sliceH, height - y);
@@ -99,8 +100,9 @@ async function imageSlices({ src }) {
   return slices.map(({ y0, y1 }) => ({ y0, y1 }));
 }
 
-async function translateSlice({ src, index, title, context }) {
+async function translateSlice({ src, index, title, context }, tabId) {
   const s = await getSettings();
+  s._notify = (text) => tabId && chrome.tabs.sendMessage(tabId, { type: "notice", text }).catch(() => {});
   const key = "s:" + (await hash(settingsKey(s) + "\u0000" + src + "\u0000" + index));
   const hit = await cacheGet(key);
   if (hit) return hit;
@@ -132,11 +134,12 @@ async function translateSlice({ src, index, title, context }) {
 }
 
 // ---------- messaging ----------
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const tabId = sender.tab?.id;
   const run = async () => {
-    if (msg.type === "translateTexts") return { ok: true, data: await translateTexts(msg) };
+    if (msg.type === "translateTexts") return { ok: true, data: await translateTexts(msg, tabId) };
     if (msg.type === "imageSlices") return { ok: true, data: await imageSlices(msg) };
-    if (msg.type === "translateSlice") return { ok: true, data: await translateSlice(msg) };
+    if (msg.type === "translateSlice") return { ok: true, data: await translateSlice(msg, tabId) };
     if (msg.type === "getSettings") return { ok: true, data: await getSettings() };
     if (msg.type === "clearCache") {
       await chrome.storage.local.clear();
