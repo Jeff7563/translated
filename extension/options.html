@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>ตั้งค่า TranslateT</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="options">
+  <h1>ตั้งค่า TranslateT</h1>
+
+  <section>
+    <h2>AI ที่ใช้แปล</h2>
+    <label>ผู้ให้บริการ
+      <select id="provider">
+        <option value="anthropic">Claude (Anthropic)</option>
+        <option value="gemini">Gemini (Google)</option>
+        <option value="openai">OpenAI หรือที่เข้ากันได้ (OpenRouter, DeepSeek, Ollama)</option>
+      </select>
+    </label>
+    <label>API key <input id="apiKey" type="password" autocomplete="off"></label>
+    <label>โมเดล <input id="model"></label>
+    <label id="baseUrlRow">Base URL <input id="baseUrl" placeholder="https://api.openai.com/v1 หรือ http://localhost:11434/v1"></label>
+    <p class="hint">key ถูกเก็บในเบราว์เซอร์ของคุณเท่านั้น และส่งตรงไปยังผู้ให้บริการที่เลือก</p>
+  </section>
+
+  <section>
+    <h2>สไตล์การแปล</h2>
+    <label>แปลจากภาษา <select id="sourceLang"></select></label>
+    <label>แปลเป็น <select id="targetLang"></select></label>
+    <label>ประเภทเนื้อหา <input id="genre"></label>
+    <label>น้ำเสียงที่ต้องการ <input id="tone" placeholder="เช่น ภาษาพูดวัยรุ่น, สุภาพ, ย้อนยุค"></label>
+    <label>แสดงผล
+      <select id="displayMode">
+        <option value="replace">แทนที่ต้นฉบับ</option>
+        <option value="bilingual">แสดงสองภาษา</option>
+      </select>
+    </label>
+  </section>
+
+  <section>
+    <h2>อภิธานศัพท์</h2>
+    <p class="hint">บรรทัดละหนึ่งคำ รูปแบบ <code>ต้นฉบับ = คำแปล</code> เช่น <code>Sung Jinwoo = ซองจินอู</code></p>
+    <textarea id="glossary" rows="6"></textarea>
+  </section>
+
+  <section>
+    <h2>ข้อมูลตัวละคร</h2>
+    <p class="hint">ช่วยให้เลือกสรรพนามและคำลงท้ายถูก เช่น <code>Jinwoo: ชาย 20 ปี เงียบ ๆ พูดห้วน ใช้ "ฉัน/นาย"</code></p>
+    <textarea id="characters" rows="6"></textarea>
+  </section>
+
+  <section>
+    <h2>รูปภาพ</h2>
+    <label class="row"><input type="checkbox" id="translateImages"> แปลตัวหนังสือในรูปอัตโนมัติเมื่อเลื่อนถึง</label>
+    <label>ขนาดรูปขั้นต่ำ (px) <input id="minImageSize" type="number" min="50"></label>
+  </section>
+
+  <button id="save" class="primary">บันทึก</button>
+  <button id="clear">ล้างแคชคำแปล</button>
+  <span id="msg"></span>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

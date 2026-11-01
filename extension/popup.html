@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <h1>TranslateT</h1>
+  <label>แปลเป็น
+    <select id="targetLang"></select>
+  </label>
+  <label>ประเภทเนื้อหา
+    <input id="genre" placeholder="เช่น การ์ตูนแอ็กชัน, นิยายรัก, ข่าว">
+  </label>
+  <label class="row"><input type="checkbox" id="translateImages"> แปลตัวหนังสือในรูป (การ์ตูน)</label>
+  <label class="row"><input type="checkbox" id="auto"> แปลเว็บนี้อัตโนมัติทุกครั้ง</label>
+  <button id="go" class="primary">แปลหน้านี้</button>
+  <button id="stop">คืนต้นฉบับ</button>
+  <p class="hint">คีย์ลัด Alt+T · คลิกขวาที่รูปเพื่อแปลรูปเดียว · คลิกบอลลูนเพื่อดูต้นฉบับ</p>
+  <p id="warn" class="warn" hidden>ยังไม่ได้ใส่ API key</p>
+  <a href="options.html" target="_blank">ตั้งค่าเพิ่มเติม (AI, อภิธานศัพท์, ตัวละคร)</a>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
