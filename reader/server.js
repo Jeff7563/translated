@@ -78,38 +78,68 @@ const MIN_W = 300;
 
 // Opens the chapter, scrolls to trigger lazy loading, and lists the big images.
 const chapters = new Map(); // url -> { at, data }, so reopening a chapter is instant
+const loading = new Map(); // url -> promise, so parallel requests share one page load
 async function getChapter(url) {
   const hit = chapters.get(url);
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.data;
-  const data = await loadChapter(url);
+  if (!loading.has(url)) loading.set(url, loadChapter(url).finally(() => loading.delete(url)));
+  const data = await loading.get(url);
   if (data.images.length) chapters.set(url, { at: Date.now(), data });
   if (chapters.size > 50) chapters.delete(chapters.keys().next().value);
   return data;
+}
+
+// Image bytes the chapter page itself downloaded. Image hosts often refuse a
+// second request for the same file, so we keep what the page already loaded.
+const images = new Map(); // src -> { type, body }
+function keepImage(src, img) {
+  images.delete(src);
+  images.set(src, img);
+  while (images.size > 400) images.delete(images.keys().next().value);
 }
 
 async function loadChapter(url) {
   const ctx = await browserContext();
   if (!ctx) return getChapterPlain(url);
   const page = await ctx.newPage();
+  const pending = [];
+  page.on("response", (r) => {
+    if (r.request().resourceType() !== "image" || !r.ok()) return;
+    pending.push(
+      r
+        .body()
+        .then((body) => body.length > 5000 && keepImage(r.url(), { type: r.headers()["content-type"] || "image/jpeg", body }))
+        .catch(() => {})
+    );
+  });
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForTimeout(1000);
+    // Make lazy images load even when we scroll past them quickly.
+    await page.evaluate(() => document.querySelectorAll("img[loading=lazy]").forEach((i) => (i.loading = "eager")));
     let last = -1;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 80; i++) {
       const n = await page.evaluate(() => {
         // Scroll the window and any inner scroll box (some readers scroll a div).
         const boxes = [document.scrollingElement, ...document.querySelectorAll("*")].filter(
           (el) => el && el.scrollHeight > el.clientHeight + 50 && /auto|scroll/.test(getComputedStyle(el).overflowY + (el === document.scrollingElement ? "auto" : ""))
         );
-        for (const b of boxes) b.scrollTop += b.clientHeight * 2;
+        for (const b of boxes) b.scrollTop += b.clientHeight;
         return document.images.length + ":" + boxes.map((b) => Math.round(b.scrollTop)).join(",");
       });
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(250);
       if (n === last) break;
       last = n;
     }
-    await page.waitForTimeout(800);
-    return await page.evaluate((minW) => {
+    // Wait (up to 20 s) for the big images to finish downloading.
+    await page
+      .waitForFunction(
+        (minW) => [...document.images].filter((i) => i.getBoundingClientRect().width >= minW).every((i) => i.complete),
+        MIN_W,
+        { timeout: 20000, polling: 500 }
+      )
+      .catch(() => {});
+    const data = await page.evaluate((minW) => {
       const seen = new Set();
       const images = [];
       for (const img of document.images) {
@@ -122,12 +152,28 @@ async function loadChapter(url) {
         seen.add(src);
         images.push({ src, w: img.naturalWidth, h: img.naturalHeight });
       }
-      const links = [...document.querySelectorAll("a[href]")];
-      const next =
-        document.querySelector("a[rel~=next]") ||
-        links.find((a) => /^\s*(next|next chapter|ตอนต่อไป|ถัดไป)\b|›|»|→/i.test(a.textContent) && a.href !== location.href);
-      return { title: document.title, url: location.href, images, next: next ? next.href : null };
+      const isNext = (el) => {
+        const t = ((el.getAttribute("aria-label") || "") + " " + el.textContent).trim();
+        return /^(next\b|next chapter|ตอนต่อไป|ถัดไป)|›|»|→/i.test(t) && !/prev/i.test(t);
+      };
+      const a = document.querySelector("a[rel~=next]") || [...document.querySelectorAll("a[href]")].find((x) => isNext(x) && x.href !== location.href);
+      if (a) return { title: document.title, url: location.href, images, next: a.href };
+      // Some readers use a button instead of a link: mark it so we can click it.
+      const b = [...document.querySelectorAll("button, [role=button]")].find(isNext);
+      if (b) b.setAttribute("data-tt-next", "1");
+      return { title: document.title, url: location.href, images, next: null, nextButton: !!b };
     }, MIN_W);
+    await Promise.all(pending);
+    if (data.nextButton) {
+      try {
+        const before = page.url();
+        await page.click("[data-tt-next]", { timeout: 5000 });
+        await page.waitForURL((u) => u.href !== before, { timeout: 10000 });
+        data.next = page.url();
+      } catch {}
+    }
+    delete data.nextButton;
+    return data;
   } finally {
     await page.close().catch(() => {});
   }
@@ -153,8 +199,15 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 // Image bytes, fetched with the site's cookies and referer (many image hosts check it).
 async function getImage(src, ref) {
+  if (images.has(src)) return images.get(src);
   const ctx = await browserContext();
   const headers = { referer: ref || src, "user-agent": UA };
+  if (ctx && ref) {
+    // Not kept (server restarted or evicted): open the chapter again.
+    chapters.delete(ref);
+    await getChapter(ref);
+    if (images.has(src)) return images.get(src);
+  }
   if (ctx) {
     const r = await ctx.request.get(src, { headers, timeout: 45000 });
     if (!r.ok()) throw new Error(`โหลดรูปไม่ได้ (${r.status()})`);
