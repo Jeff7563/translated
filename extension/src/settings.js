@@ -1,9 +1,10 @@
 // Shared defaults for background, popup and options pages.
 export const DEFAULTS = {
-  provider: "anthropic", // anthropic | openai | gemini
+  provider: "anthropic", // anthropic | gemini | openai | ollama
   apiKey: "",
   model: "claude-sonnet-5-5",
-  baseUrl: "https://api.openai.com/v1", // used by "openai" provider (also Ollama, OpenRouter, DeepSeek...)
+  baseUrl: "https://api.openai.com/v1", // used by "openai" provider (OpenRouter, DeepSeek...)
+  ollamaUrl: "http://localhost:11434",
   targetLang: "Thai",
   sourceLang: "auto",
   genre: "การ์ตูน / มังงะ / เว็บตูน",
@@ -19,7 +20,8 @@ export const DEFAULTS = {
 export const MODEL_HINTS = {
   anthropic: "claude-sonnet-5-5",
   openai: "gpt-5-mini",
-  gemini: "gemini-3.5-flash-lite"
+  gemini: "gemini-3.5-flash-lite",
+  ollama: "qwen2.5vl:7b"
 };
 
 export const LANGS = [

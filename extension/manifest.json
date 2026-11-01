@@ -4,7 +4,7 @@
   "short_name": "TranslateT",
   "version": "0.1.0",
   "description": "แปลหน้าเว็บและบอลลูนการ์ตูนด้วย AI ให้อ่านลื่นเหมือนคนเขียนเอง ทุกคู่ภาษา",
-  "permissions": ["storage", "contextMenus", "activeTab", "scripting"],
+  "permissions": ["storage", "contextMenus", "activeTab", "scripting", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "src/background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "TranslateT" },

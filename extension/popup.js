@@ -10,7 +10,7 @@ $("targetLang").value = s.targetLang;
 $("genre").value = s.genre;
 $("translateImages").checked = s.translateImages;
 $("auto").checked = s.autoSites.includes(host);
-$("warn").hidden = !!s.apiKey || s.provider === "openai";
+$("warn").hidden = !!s.apiKey || s.provider === "openai" || s.provider === "ollama";
 
 const save = async () => {
   const autoSites = new Set(s.autoSites);

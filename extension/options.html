@@ -14,12 +14,19 @@
       <select id="provider">
         <option value="anthropic">Claude (Anthropic)</option>
         <option value="gemini">Gemini (Google)</option>
-        <option value="openai">OpenAI หรือที่เข้ากันได้ (OpenRouter, DeepSeek, Ollama)</option>
+        <option value="ollama">Ollama (รันบนเครื่อง ฟรี ไม่มีโควต้า)</option>
+        <option value="openai">OpenAI หรือที่เข้ากันได้ (OpenRouter, DeepSeek)</option>
       </select>
     </label>
-    <label>API key <input id="apiKey" type="password" autocomplete="off"></label>
-    <label>โมเดล <input id="model"></label>
-    <label id="baseUrlRow">Base URL <input id="baseUrl" placeholder="https://api.openai.com/v1 หรือ http://localhost:11434/v1"></label>
+    <label id="apiKeyRow">API key <input id="apiKey" type="password" autocomplete="off"></label>
+    <label id="ollamaRow">ที่อยู่ Ollama <input id="ollamaUrl" placeholder="http://localhost:11434"></label>
+    <label>โมเดล <input id="model" list="modelList"><datalist id="modelList"></datalist></label>
+    <div id="ollamaTools">
+      <button id="loadModels" type="button">ดึงรายชื่อโมเดลจาก Ollama</button>
+      <span id="ollamaMsg" class="hint"></span>
+      <p class="hint">การ์ตูนต้องใช้โมเดลที่ดูรูปได้ เช่น <code>qwen2.5vl:7b</code>, <code>qwen3-vl:8b</code>, <code>gemma3:12b</code> (ติดตั้ง: <code>ollama pull qwen2.5vl:7b</code>)</p>
+    </div>
+    <label id="baseUrlRow">Base URL <input id="baseUrl" placeholder="https://api.openai.com/v1"></label>
     <p class="hint">key ถูกเก็บในเบราว์เซอร์ของคุณเท่านั้น และส่งตรงไปยังผู้ให้บริการที่เลือก</p>
   </section>
 

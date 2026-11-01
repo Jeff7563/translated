@@ -192,7 +192,8 @@
   // readers scroll inside a div, where IntersectionObserver ignores margins.
   const AHEAD = 1600; // px below the screen we start translating
   const BEHIND = 600;
-  const JOB_CONCURRENCY = 2;
+  // A local model works on one image at a time; cloud APIs can take two.
+  const jobConcurrency = () => (settings?.provider === "ollama" ? 1 : 2);
   const jobs = [];
   let jobsRunning = 0;
 
@@ -247,7 +248,7 @@
   }
 
   function pumpJobs() {
-    while (active && jobsRunning < JOB_CONCURRENCY && jobs.length) {
+    while (active && jobsRunning < jobConcurrency() && jobs.length) {
       let best = -1;
       let bestD = Infinity;
       for (let i = 0; i < jobs.length; i++) {
