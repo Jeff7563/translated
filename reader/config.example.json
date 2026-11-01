@@ -1,0 +1,12 @@
+{
+  "provider": "ollama",
+  "model": "qwen2.5vl:7b",
+  "ollamaUrl": "http://localhost:11434",
+  "targetLang": "Thai",
+  "genre": "การ์ตูน / มังงะ / เว็บตูน",
+  "tone": "ภาษาพูดเป็นกันเอง เหมือนคนไทยคุยกันจริง",
+  "glossary": "",
+  "characters": "",
+  "port": 8787,
+  "headless": true
+}

@@ -1,6 +1,7 @@
 import { getSettings } from "./settings.js";
 import { systemPrompt, textUserPrompt, imageUserPrompt } from "./prompt.js";
 import { callLLM, parseJSON, listOllamaModels } from "./providers.js";
+import { sliceItems } from "./boxes.js";
 
 // ---------- cache ----------
 async function hash(str) {
@@ -109,38 +110,7 @@ async function translateSlice({ src, index, title, context }, tabId) {
   const sl = (await getSlices(src))[index];
   if (!sl) return { items: [], story: "" };
   const reply = await callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500) }), sl.image);
-  const j = parseJSON(reply);
-  const span = sl.y1 - sl.y0;
-  const items = [];
-  const sources = [];
-  for (const it of j.items || []) {
-    const b = it.box_2d || it.box;
-    if (!Array.isArray(b) || b.length !== 4 || !it.text) continue;
-    let [ymin, xmin, ymax, xmax] = b.map(Number);
-    // Some local models (Qwen2.5-VL) answer in pixels of the image they saw.
-    if (Math.max(ymin, xmin, ymax, xmax) > 1000) {
-      ymin = (ymin / sl.h) * 1000;
-      ymax = (ymax / sl.h) * 1000;
-      xmin = (xmin / sl.w) * 1000;
-      xmax = (xmax / sl.w) * 1000;
-    }
-    if (!(ymax > ymin && xmax > xmin)) continue;
-    // Models often box only the letters: grow the box so it covers the bubble text.
-    const padX = (xmax - xmin) * 0.12 + 8;
-    const padY = (ymax - ymin) * 0.15 + 8;
-    const c = (v) => Math.min(1000, Math.max(0, v));
-    [xmin, xmax, ymin, ymax] = [c(xmin - padX), c(xmax + padX), c(ymin - padY), c(ymax + padY)];
-    items.push({
-      x0: xmin / 1000,
-      x1: xmax / 1000,
-      y0: sl.y0 + (ymin / 1000) * span,
-      y1: sl.y0 + (ymax / 1000) * span,
-      source: it.source || "",
-      text: it.text
-    });
-    if (it.source) sources.push(it.source);
-  }
-  const result = { items, story: sources.join("\n") };
+  const result = sliceItems(parseJSON(reply), sl);
   await cacheSet(key, result);
   return result;
 }

@@ -1,0 +1,9 @@
+{
+  "name": "translatet-reader",
+  "private": true,
+  "type": "module",
+  "description": "Read translated comics on your phone; the PC does the translating.",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "playwright-core": "^1.50.0" },
+  "engines": { "node": ">=18" }
+}
