@@ -167,8 +167,10 @@ async function loadChapter(url) {
     if (data.nextButton) {
       try {
         const before = page.url();
-        await page.click("[data-tt-next]", { timeout: 5000 });
-        await page.waitForURL((u) => u.href !== before, { timeout: 10000 });
+        // A plain DOM click: a mouse click can be swallowed by an overlay (comix.to).
+        const moved = page.waitForURL((u) => u.href !== before, { timeout: 10000 });
+        await page.evaluate(() => document.querySelector("[data-tt-next]").click());
+        await moved;
         data.next = page.url();
       } catch {}
     }
