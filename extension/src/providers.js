@@ -2,6 +2,7 @@
 // image: optional { mime, base64 }
 
 export async function callLLM(s, system, user, image) {
+  if (s.provider === "ollama") return ollama(s, system, user, image);
   if (!s.apiKey && s.provider !== "openai") throw new Error("ยังไม่ได้ใส่ API key (ไปที่หน้าตั้งค่า)");
   if (s.provider === "anthropic") return anthropic(s, system, user, image);
   if (s.provider === "gemini") return gemini(s, system, user, image);
@@ -12,13 +13,13 @@ export const DAILY_QUOTA = "DAILY_QUOTA";
 
 // Free tiers allow only a few requests per minute: wait and retry on 429/503,
 // telling the page why it is waiting. A per-day limit is not worth waiting for.
-async function post(url, headers, body, notify) {
+async function post(url, headers, body, notify, timeoutMs = 90000) {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(90000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
     const text = await res.text();
     if (res.ok) return JSON.parse(text);
@@ -70,6 +71,46 @@ async function openai(s, system, user, image) {
     ]
   }, s._notify);
   return j.choices[0].message.content;
+}
+
+// Local models through Ollama: free, no quota, runs on the user's GPU.
+async function ollama(s, system, user, image) {
+  const base = (s.ollamaUrl || "http://localhost:11434").replace(/\/+$/, "");
+  const msg = { role: "user", content: user };
+  if (image) msg.images = [image.base64];
+  let j;
+  try {
+    j = await post(
+      `${base}/api/chat`,
+      {},
+      {
+        model: s.model,
+        stream: false,
+        format: "json",
+        keep_alive: "30m",
+        options: { temperature: 0.3, num_ctx: 8192 },
+        messages: [{ role: "system", content: system }, msg]
+      },
+      s._notify,
+      300000
+    );
+  } catch (e) {
+    if (/^403/.test(e.message)) {
+      throw new Error("Ollama ปฏิเสธการเชื่อมต่อ ให้ตั้งตัวแปร OLLAMA_ORIGINS=chrome-extension://* แล้วเปิด Ollama ใหม่");
+    }
+    if (/^404/.test(e.message)) throw new Error(`ไม่พบโมเดล ${s.model} ใน Ollama (ลอง: ollama pull ${s.model})`);
+    if (/Failed to fetch|NetworkError/i.test(e.message)) throw new Error("ต่อ Ollama ไม่ได้ เปิดโปรแกรม Ollama อยู่หรือเปล่า?");
+    throw e;
+  }
+  return j.message?.content || "";
+}
+
+export async function listOllamaModels(url) {
+  const base = (url || "http://localhost:11434").replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/tags`);
+  if (!res.ok) throw new Error(`${res.status}`);
+  const j = await res.json();
+  return (j.models || []).map((m) => m.name);
 }
 
 // Google retires model names often, and free "flash" models allow only ~20

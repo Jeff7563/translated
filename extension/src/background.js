@@ -1,6 +1,6 @@
 import { getSettings } from "./settings.js";
 import { systemPrompt, textUserPrompt, imageUserPrompt } from "./prompt.js";
-import { callLLM, parseJSON } from "./providers.js";
+import { callLLM, parseJSON, listOllamaModels } from "./providers.js";
 
 // ---------- cache ----------
 async function hash(str) {
@@ -70,7 +70,7 @@ async function loadSlices(src) {
     canvas.getContext("2d").drawImage(bmp, 0, y, width, h, 0, 0, canvas.width, canvas.height);
     const out = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 });
     const base64 = await blobToBase64(out);
-    slices.push({ y0: y / height, y1: (y + h) / height, image: { mime: "image/jpeg", base64 } });
+    slices.push({ y0: y / height, y1: (y + h) / height, w: canvas.width, h: canvas.height, image: { mime: "image/jpeg", base64 } });
   }
   return slices;
 }
@@ -116,8 +116,20 @@ async function translateSlice({ src, index, title, context }, tabId) {
   for (const it of j.items || []) {
     const b = it.box_2d || it.box;
     if (!Array.isArray(b) || b.length !== 4 || !it.text) continue;
-    const [ymin, xmin, ymax, xmax] = b.map((v) => Math.min(1000, Math.max(0, Number(v))));
+    let [ymin, xmin, ymax, xmax] = b.map(Number);
+    // Some local models (Qwen2.5-VL) answer in pixels of the image they saw.
+    if (Math.max(ymin, xmin, ymax, xmax) > 1000) {
+      ymin = (ymin / sl.h) * 1000;
+      ymax = (ymax / sl.h) * 1000;
+      xmin = (xmin / sl.w) * 1000;
+      xmax = (xmax / sl.w) * 1000;
+    }
     if (!(ymax > ymin && xmax > xmin)) continue;
+    // Models often box only the letters: grow the box so it covers the bubble text.
+    const padX = (xmax - xmin) * 0.12 + 8;
+    const padY = (ymax - ymin) * 0.15 + 8;
+    const c = (v) => Math.min(1000, Math.max(0, v));
+    [xmin, xmax, ymin, ymax] = [c(xmin - padX), c(xmax + padX), c(ymin - padY), c(ymax + padY)];
     items.push({
       x0: xmin / 1000,
       x1: xmax / 1000,
@@ -141,6 +153,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "imageSlices") return { ok: true, data: await imageSlices(msg) };
     if (msg.type === "translateSlice") return { ok: true, data: await translateSlice(msg, tabId) };
     if (msg.type === "getSettings") return { ok: true, data: await getSettings() };
+    if (msg.type === "ollamaModels") return { ok: true, data: await listOllamaModels(msg.url) };
     if (msg.type === "clearCache") {
       await chrome.storage.local.clear();
       return { ok: true };
@@ -150,6 +163,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   run().then(sendResponse, (e) => sendResponse({ ok: false, error: String(e.message || e) }));
   return true;
 });
+
+// ---------- local Ollama ----------
+// Ollama refuses browser-extension origins unless OLLAMA_ORIGINS is set.
+// Requests from this extension to localhost don't need an Origin header, so drop it.
+async function installOllamaRule() {
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [1],
+      addRules: [
+        {
+          id: 1,
+          priority: 1,
+          action: { type: "modifyHeaders", requestHeaders: [{ header: "origin", operation: "remove" }] },
+          condition: {
+            regexFilter: "^http://(localhost|127\\.0\\.0\\.1)(:[0-9]+)?/api/",
+            initiatorDomains: [chrome.runtime.id],
+            resourceTypes: ["xmlhttprequest", "other"]
+          }
+        }
+      ]
+    });
+  } catch (e) {
+    console.warn("TranslateT: could not install Ollama header rule", e);
+  }
+}
+chrome.runtime.onInstalled.addListener(installOllamaRule);
+chrome.runtime.onStartup.addListener(installOllamaRule);
 
 // ---------- menus & shortcut ----------
 chrome.runtime.onInstalled.addListener(() => {
