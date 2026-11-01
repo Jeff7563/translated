@@ -1,7 +1,7 @@
 import { getSettings } from "./settings.js";
 import { systemPrompt, textUserPrompt, imageUserPrompt } from "./prompt.js";
 import { callLLM, parseJSON, listOllamaModels } from "./providers.js";
-import { sliceItems } from "./boxes.js";
+import { sliceItems, sliceGeometry } from "./boxes.js";
 
 // ---------- cache ----------
 async function hash(str) {
@@ -54,20 +54,21 @@ async function translateTexts({ title, context, segments }, tabId) {
 
 // ---------- images ----------
 // Tall webtoon strips are sliced so the model can still read the small text.
-async function loadSlices(src) {
+async function loadSlices(src, geo) {
   const res = await fetch(src, { credentials: "include" });
   if (!res.ok) throw new Error(`โหลดรูปไม่ได้ (${res.status})`);
   const blob = await res.blob();
   const bmp = await createImageBitmap(blob);
   const { width, height } = bmp;
-  const maxW = Math.min(width, 1000);
-  const scale = maxW / width;
-  const sliceH = Math.round(width * 2.4); // in source pixels
+  const outW = geo.pixels ? geo.width : Math.min(width, geo.width);
+  const scale = outW / width;
+  const sliceH = Math.round((width * geo.height) / geo.width); // in source pixels
+  const snap = (v) => Math.max(geo.step * 2, Math.round(v / geo.step) * geo.step);
   const slices = [];
   for (let y = 0; y < height; y += sliceH) {
     const h = Math.min(sliceH, height - y);
     if (h < 40) break;
-    const canvas = new OffscreenCanvas(Math.round(width * scale), Math.round(h * scale));
+    const canvas = new OffscreenCanvas(snap(width * scale), snap(h * scale));
     canvas.getContext("2d").drawImage(bmp, 0, y, width, h, 0, 0, canvas.width, canvas.height);
     const out = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.85 });
     const base64 = await blobToBase64(out);
@@ -86,31 +87,33 @@ async function blobToBase64(blob) {
 // Slices of recently used images, kept in memory so each slice request does
 // not download and cut the image again.
 const sliceCache = new Map();
-function getSlices(src) {
-  if (!sliceCache.has(src)) {
-    const p = loadSlices(src);
-    p.catch(() => sliceCache.delete(src));
-    sliceCache.set(src, p);
+function getSlices(src, geo) {
+  const key = geo.width + ":" + src;
+  if (!sliceCache.has(key)) {
+    const p = loadSlices(src, geo);
+    p.catch(() => sliceCache.delete(key));
+    sliceCache.set(key, p);
     while (sliceCache.size > 12) sliceCache.delete(sliceCache.keys().next().value);
   }
-  return sliceCache.get(src);
+  return sliceCache.get(key);
 }
 
 async function imageSlices({ src }) {
-  const slices = await getSlices(src);
+  const slices = await getSlices(src, sliceGeometry(await getSettings()));
   return slices.map(({ y0, y1 }) => ({ y0, y1 }));
 }
 
 async function translateSlice({ src, index, title, context }, tabId) {
   const s = await getSettings();
   s._notify = (text) => tabId && chrome.tabs.sendMessage(tabId, { type: "notice", text }).catch(() => {});
-  const key = "s:" + (await hash(settingsKey(s) + "\u0000" + src + "\u0000" + index));
+  const key = "s2:" + (await hash(settingsKey(s) + "\u0000" + src + "\u0000" + index));
   const hit = await cacheGet(key);
   if (hit) return hit;
-  const sl = (await getSlices(src))[index];
+  const geo = sliceGeometry(s);
+  const sl = (await getSlices(src, geo))[index];
   if (!sl) return { items: [], story: "" };
-  const reply = await callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500) }), sl.image);
-  const result = sliceItems(parseJSON(reply), sl);
+  const reply = await callLLM(s, systemPrompt(s), imageUserPrompt({ title, context: (context || "").slice(-1500), pixels: geo.pixels, w: sl.w, h: sl.h, targetLang: s.targetLang }), sl.image);
+  const result = sliceItems(parseJSON(reply), sl, geo.pixels);
   await cacheSet(key, result);
   return result;
 }

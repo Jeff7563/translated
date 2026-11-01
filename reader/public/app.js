@@ -17,6 +17,12 @@ const api = async (p, body) => {
   return j;
 };
 
+// How the PC wants images cut (depends on the model). Loaded once.
+let geo = { width: 1000, height: 2400, pixels: false, step: 1 };
+const infoReady = api("/api/info")
+  .then((i) => i.slice && (geo = i.slice))
+  .catch(() => {});
+
 // ---------- status ----------
 let statusTimer;
 function status(text, sticky) {
@@ -126,17 +132,28 @@ function addPage(im, i, my) {
   const img = document.createElement("img");
   img.alt = "";
   img.dataset.src = `/api/img?k=${encodeURIComponent(K)}&src=${encodeURIComponent(im.src)}&ref=${encodeURIComponent(chapter.url)}`;
-  img.onload = () => {
+  img.onload = async () => {
+    await infoReady;
     if (my !== gen) return;
     page.classList.add("ready");
     page.style.aspectRatio = "";
-    const sliceH = Math.round(img.naturalWidth * 2.4);
-    for (let y = 0, s = 0; y < img.naturalHeight; y += sliceH, s++) {
-      const h = Math.min(sliceH, img.naturalHeight - y);
-      if (h < 40) break;
-      jobs.push({ my, page, img, i, s, y, h, y0: y / img.naturalHeight, y1: (y + h) / img.naturalHeight });
+    // Cut into slices that overlap a little, so a bubble cut at one edge is
+    // whole in the next slice. Each slice keeps only bubbles centred in its
+    // own part, so nothing is drawn twice.
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const sliceH = Math.round((W * geo.height) / geo.width);
+    const overlap = Math.round(sliceH * 0.15);
+    const starts = [0];
+    while (starts.at(-1) + sliceH < H) starts.push(starts.at(-1) + sliceH - overlap);
+    starts.forEach((y, s) => {
+      const h = Math.min(sliceH, H - y);
+      if (h < 40 && s > 0) return;
+      const own0 = s === 0 ? 0 : (y + overlap / 2) / H;
+      const own1 = s === starts.length - 1 ? 1 : (y + sliceH - overlap / 2) / H;
+      jobs.push({ my, page, img, i, s, y, h, y0: y / H, y1: (y + h) / H, own0, own1 });
       total++;
-    }
+    });
     pump();
   };
   img.onerror = () => {
@@ -181,16 +198,17 @@ function contextBefore(job) {
 
 async function run(job) {
   if (job.my !== gen) return;
-  const key = `${job.img.dataset.src.replace(/k=[^&]*&/, "")}#${job.s}`;
+  const key = `${job.img.dataset.src.replace(/k=[^&]*&/, "")}#${geo.width}x${geo.height}@${job.y}`;
   status(`กำลังแปล ${finished + 1}/${total}…`, true);
   try {
     let r = await api("/api/translate", { key });
     if (r.miss) {
-      const maxW = Math.min(job.img.naturalWidth, 1000);
-      const scale = maxW / job.img.naturalWidth;
+      const outW = geo.pixels ? geo.width : Math.min(job.img.naturalWidth, geo.width);
+      const scale = outW / job.img.naturalWidth;
+      const snap = (v) => Math.max(geo.step * 2, Math.round(v / geo.step) * geo.step);
       const c = document.createElement("canvas");
-      c.width = Math.round(job.img.naturalWidth * scale);
-      c.height = Math.round(job.h * scale);
+      c.width = snap(job.img.naturalWidth * scale);
+      c.height = snap(job.h * scale);
       c.getContext("2d").drawImage(job.img, 0, job.y, job.img.naturalWidth, job.h, 0, 0, c.width, c.height);
       const base64 = c.toDataURL("image/jpeg", 0.85).split(",")[1];
       r = await api("/api/translate", {
@@ -203,7 +221,10 @@ async function run(job) {
     }
     if (job.my !== gen) return;
     done.set(`${job.i}:${job.s}`, r.story || "");
-    for (const it of r.items) draw(job.page, it);
+    for (const it of r.items) {
+      const cy = (it.y0 + it.y1) / 2;
+      if (cy >= job.own0 && cy <= job.own1) draw(job.page, it);
+    }
   } catch (e) {
     if (job.my !== gen) return;
     status("แปลไม่สำเร็จ: " + e.message);
@@ -212,13 +233,54 @@ async function run(job) {
   if (job.my === gen) status(finished >= total && !jobs.length ? `แปลครบแล้ว ${total} ส่วน` : `แปลแล้ว ${finished}/${total}`, finished < total);
 }
 
-function draw(page, it) {
+const clamp = (v) => Math.min(1, Math.max(0, v));
+
+// Share of two boxes' overlap in the smaller one (0..1).
+function overlapShare(a, b) {
+  const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  if (w <= 0 || h <= 0) return 0;
+  const small = Math.min((a.x1 - a.x0) * (a.y1 - a.y0), (b.x1 - b.x0) * (b.y1 - b.y0));
+  return (w * h) / small;
+}
+
+function draw(page, raw) {
+  const pageW = page.clientWidth || innerWidth;
+  const pageH = page.clientHeight || pageW;
+  const it = { ...raw, x0: clamp(raw.x0), x1: clamp(raw.x1), y0: clamp(raw.y0), y1: clamp(raw.y1) };
+  // Thin boxes (vertical text, or the model boxed one word) can't hold a Thai
+  // line: widen them around their centre to at least ~6 Thai letters.
+  page.boxes = page.boxes || [];
+  const minW = Math.min(0.9, Math.max(0.24, 90 / pageW));
+  if (it.x1 - it.x0 < minW) {
+    // Grow to the side that covers the fewest bubbles already drawn.
+    const cx = (it.x0 + it.x1) / 2;
+    const tries = [cx - minW / 2, it.x0, it.x1 - minW].map((x0) => {
+      x0 = Math.max(0, Math.min(x0, 1 - minW));
+      const c = { ...it, x0, x1: x0 + minW };
+      return [page.boxes.reduce((n, b) => n + overlapShare(b, c), 0), x0];
+    });
+    tries.sort((a, b) => a[0] - b[0]);
+    it.x0 = tries[0][1];
+    it.x1 = it.x0 + minW;
+  }
+  const minH = 34 / pageH;
+  if (it.y1 - it.y0 < minH) {
+    const cy = (it.y0 + it.y1) / 2;
+    it.y0 = clamp(cy - minH / 2);
+    it.y1 = clamp(it.y0 + minH);
+  }
+  // The same bubble read twice: keep the first one.
+  if (page.boxes.some((b) => overlapShare(b, it) > 0.5)) return;
+  page.boxes.push(it);
+
   const b = document.createElement("div");
   b.className = "bubble";
   b.style.left = it.x0 * 100 + "%";
   b.style.top = it.y0 * 100 + "%";
   b.style.width = (it.x1 - it.x0) * 100 + "%";
-  b.style.height = (it.y1 - it.y0) * 100 + "%";
+  b.style.minHeight = (it.y1 - it.y0) * 100 + "%";
+  b.dataset.h = it.y1 - it.y0;
   b.textContent = it.text;
   b.title = it.source;
   b.onclick = () => b.classList.toggle("src");
@@ -226,14 +288,14 @@ function draw(page, it) {
   fit(b);
 }
 
+// Biggest font (9-22 px) at which the text fits the box without growing it.
 function fit(el) {
   const w = el.clientWidth;
-  const h = el.clientHeight;
+  const h = parseFloat(el.dataset.h) * el.parentElement.clientHeight;
   if (!w || !h) return;
-  const len = Math.max(1, el.textContent.length);
-  let size = Math.max(9, Math.min(24, Math.sqrt((w * h * 0.5) / len)));
+  let size = 22;
   el.style.fontSize = size + "px";
-  while (size > 9 && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
+  while (size > 9 && (el.scrollHeight > h + 1 || el.scrollWidth > w + 1)) {
     size -= 1;
     el.style.fontSize = size + "px";
   }

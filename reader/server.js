@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULTS } from "../extension/src/settings.js";
 import { systemPrompt, imageUserPrompt } from "../extension/src/prompt.js";
 import { callLLM, parseJSON } from "../extension/src/providers.js";
-import { sliceItems } from "../extension/src/boxes.js";
+import { sliceItems, sliceGeometry } from "../extension/src/boxes.js";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(DIR, "public");
@@ -33,7 +33,8 @@ const settings = {
   port: 8787,
   ...readJSON(path.join(DIR, "config.json"))
 };
-const settingsKey = [settings.provider, settings.model, settings.targetLang, settings.genre, settings.tone, settings.glossary, settings.characters].join("|");
+const geo = sliceGeometry(settings);
+const settingsKey = ["v2", settings.provider, settings.model, settings.targetLang, settings.genre, settings.tone, settings.glossary, settings.characters].join("|");
 
 // A random key in the link keeps other people on the same network out.
 const tokenFile = path.join(DIR, ".token");
@@ -244,13 +245,33 @@ async function translate({ key, image, slice, title, context }) {
   const hit = readJSON(file);
   if (hit.items) return hit;
   if (!image) return { miss: true };
-  const reply = await slot(() =>
-    callLLM(settings, systemPrompt(settings), imageUserPrompt({ title, context: (context || "").slice(-1500) }), image)
-  );
-  const result = sliceItems(parseJSON(reply), slice);
-  fs.writeFileSync(file, JSON.stringify(result));
-  return result;
+  const prompt = imageUserPrompt({
+    title,
+    context: (context || "").slice(-1500),
+    pixels: geo.pixels,
+    w: slice.w,
+    h: slice.h,
+    targetLang: settings.targetLang
+  });
+  let lastError;
+  // A local model sometimes returns broken JSON; one more try usually works.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const reply = await slot(() => callLLM(settings, systemPrompt(settings), prompt, image));
+      const result = sliceItems(parseJSON(reply), slice, geo.pixels);
+      fs.writeFileSync(file, JSON.stringify(result));
+      return result;
+    } catch (e) {
+      lastError = e;
+      console.warn("แปลส่วนนี้ไม่สำเร็จ:", String(e.message).slice(0, 200));
+    }
+  }
+  return { items: [], story: "", error: String(lastError?.message || lastError).slice(0, 200) };
 }
+
+// One bad request must never take the whole reader down.
+process.on("unhandledRejection", (e) => console.error("unhandled:", e?.message || e));
+process.on("uncaughtException", (e) => console.error("uncaught:", e?.message || e));
 
 // ---------- http ----------
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png" };
@@ -279,7 +300,7 @@ http
           return res.end(img.body);
         }
         if (u.pathname === "/api/translate" && req.method === "POST") return send(res, 200, await translate(await readBody(req)));
-        if (u.pathname === "/api/info") return send(res, 200, { provider: settings.provider, model: settings.model, targetLang: settings.targetLang });
+        if (u.pathname === "/api/info") return send(res, 200, { provider: settings.provider, model: settings.model, targetLang: settings.targetLang, slice: geo });
         return send(res, 404, { error: "not found" });
       }
       const file = path.join(PUBLIC, u.pathname === "/" ? "index.html" : path.normalize(u.pathname).replace(/^([/\\])+/, ""));
