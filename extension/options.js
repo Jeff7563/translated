@@ -34,7 +34,11 @@ $("loadModels").onclick = async () => {
     return;
   }
   $("modelList").innerHTML = r.data.map((m) => `<option value="${m}">`).join("");
-  $("ollamaMsg").textContent = r.data.length ? "พบ: " + r.data.join(", ") : "ยังไม่มีโมเดล ลอง ollama pull qwen2.5vl:7b";
+  const want = $("model").value.trim();
+  const has = r.data.some((m) => m === want || m === want + ":latest");
+  $("ollamaMsg").textContent =
+    (r.data.length ? "พบ: " + r.data.join(", ") : "ยังไม่มีโมเดล") +
+    (want && !has ? ` — ยังไม่มี ${want} ในเครื่อง ติดตั้งด้วย: ollama pull ${want}` : "");
 };
 
 $("save").onclick = async () => {
