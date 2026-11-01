@@ -1,0 +1,30 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #111; color: #eee; font-family: -apple-system, "Sukhumvit Set", "Noto Sans Thai", sans-serif; }
+#bar { position: sticky; top: 0; z-index: 10; display: flex; gap: 6px; padding: 8px; padding-top: max(8px, env(safe-area-inset-top)); background: #1c1c1e; transition: transform .2s; }
+#bar.hide { transform: translateY(-110%); }
+#go { flex: 1; display: flex; gap: 6px; min-width: 0; }
+#url { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 0; font-size: 16px; background: #2c2c2e; color: #fff; }
+button, .nextBtn { padding: 8px 12px; border: 0; border-radius: 8px; background: #0a84ff; color: #fff; font-size: 15px; font-family: inherit; }
+#paste, #toggle { background: #3a3a3c; }
+#toggle.off { background: #636366; text-decoration: line-through; }
+#home { padding: 24px 16px; }
+#home h1 { font-size: 22px; margin: 0 0 8px; }
+.hint { color: #aaa; font-size: 14px; }
+#recent { list-style: none; padding: 0; }
+#recent li { padding: 10px 0; border-bottom: 1px solid #333; }
+#recent a { color: #6cb4ff; text-decoration: none; word-break: break-all; }
+#chapterTitle { font-size: 15px; font-weight: 500; color: #aaa; padding: 8px 12px; margin: 0; }
+#pages { max-width: 800px; margin: 0 auto; }
+.page { position: relative; line-height: 0; min-height: 300px; background: #222; }
+.page.ready { min-height: 0; background: none; }
+.page img { width: 100%; display: block; }
+.page .err { line-height: 1.4; padding: 40px 16px; color: #f88; text-align: center; }
+.bubble {
+  position: absolute; display: flex; align-items: center; justify-content: center; text-align: center;
+  background: #fff; color: #111; border-radius: 40%; padding: 2px 6px; line-height: 1.25; font-weight: 600;
+  overflow: hidden; overflow-wrap: anywhere; box-shadow: 0 0 4px 3px #fff;
+}
+.bubble.src { opacity: 0; }
+body.original .bubble { display: none; }
+.nextBtn { display: block; margin: 24px auto 80px; width: max-content; text-decoration: none; font-size: 17px; }
+#status { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 11; background: rgba(0,0,0,.8); color: #fff; padding: 6px 12px; border-radius: 14px; font-size: 13px; white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis; }

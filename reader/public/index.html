@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TranslateT">
+<meta name="theme-color" content="#111">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>TranslateT Reader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="bar">
+    <form id="go">
+      <input id="url" type="url" inputmode="url" placeholder="วางลิงก์ตอนการ์ตูน" autocomplete="off" required>
+      <button>อ่าน</button>
+    </form>
+    <button id="paste" type="button" title="วางจากคลิปบอร์ด">📋</button>
+    <button id="toggle" type="button" title="สลับดูต้นฉบับ">ไทย</button>
+  </header>
+
+  <main id="home">
+    <h1>TranslateT Reader</h1>
+    <p class="hint">คัดลอกลิงก์ตอนการ์ตูนจากเบราว์เซอร์ แล้ววางด้านบน แตะบอลลูนเพื่อดูต้นฉบับ</p>
+    <h2 id="recentTitle" hidden>อ่านล่าสุด</h2>
+    <ul id="recent"></ul>
+  </main>
+
+  <main id="reader" hidden>
+    <h2 id="chapterTitle"></h2>
+    <div id="pages"></div>
+    <a id="next" class="nextBtn" hidden>ตอนถัดไป ›</a>
+  </main>
+
+  <div id="status" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
